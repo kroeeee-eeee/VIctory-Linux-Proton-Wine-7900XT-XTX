@@ -93,6 +93,13 @@ faster. `VICTORY_HUD=1 ./linux/victory-proton.sh` shows a MangoHud overlay.
 
 ## Settings that matter
 
+- **`VICTORY_CARD_BUFFERS_MIN_KB=64`** (on in the script): title buffers from 64 KiB up keep their copy in
+  the card's memory. Measured on an RX 7900 XT / Ryzen 9 9900X, GE-Proton11-14 with the view-tree wineserver,
+  3 unattended runs each from the same save: 20.5 / 21.6 / 20.5 fps (46-49 ms) without, 25.5 / 25.6 / 25.8 fps
+  (39 ms) with; preparing 41-43 -> 31-32 ms, copying back 25-27 -> 19-20 ms.
+- **`VICTORY_COMPUTE_WAIT_MS=500`** (on in the script): the first use of a compute pass waits up to half a
+  second for its pipeline. A pass the title runs once (the faces' blend-shape table) dropped while its pipeline
+  was still being made left heads without skin for the whole session.
 - **Huge pages for port 1** (above): the biggest single factor here after the renderer ports.
   `run-*.thp` next to the log says whether they took (`88 collapsed, 0 not`).
 - **Optional: a wineserver with a view tree** ([`linux/wineserver/`](linux/wineserver/)). The stock server

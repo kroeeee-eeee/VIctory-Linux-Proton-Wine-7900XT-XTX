@@ -34,7 +34,8 @@ for kv in VICTORY_TEXTURE_NO_WAIT=1 VICTORY_RELAY=2 VICTORY_WIDE_BACK=1 VICTORY_
     VICTORY_SHOW_AFTER=1 VICTORY_AMBIENT=0.8 VICTORY_D3D12_DRED=light VICTORY_SKIP_PIPELINES=none \
     VICTORY_THIN=1 VICTORY_JOIN_PARTS=8 VICTORY_UPLOAD_AHEAD=1 \
     VICTORY_PORT_DESCRIPTORS=1 VICTORY_PORT_GUARD=1 VICTORY_PORT_JOURNAL=1 VICTORY_PORT_CBV=1 \
-    VICTORY_PORT_CONSTANTS=1 VICTORY_COPY_COMPARE=1 VICTORY_ONE_PAD=0 VICTORY_FRAME_INTERVAL_MS=0; do
+    VICTORY_PORT_CONSTANTS=1 VICTORY_COPY_COMPARE=1 VICTORY_ONE_PAD=0 VICTORY_FRAME_INTERVAL_MS=0 \
+    VICTORY_CARD_BUFFERS_MIN_KB=64 VICTORY_COMPUTE_WAIT_MS=500; do
     k=${kv%%=*}
     [ -z "${!k+x}" ] && export "$kv"
 done
@@ -91,7 +92,8 @@ thp_watch() {
         pid=$(for p in $(pgrep -f 'victory\.exe run'); do echo "$(ls /proc/$p/task 2>/dev/null | wc -l) $p"; done \
             | sort -rn | awk 'NR==1{print $2}')
         [ -n "$pid" ] || continue
-        ranges=$(grep -aoE "32-bit heap are private memory.*at=0x[0-9a-f]+ len=[0-9]+" "$log" 2>/dev/null \
+        # (the log may carry ANSI colour codes between a field's name and value)
+        ranges=$(sed 's/\x1b\[[0-9;]*m//g' "$log" 2>/dev/null | grep -aoE "32-bit heap are private memory.*at=0x[0-9a-f]+ len=[0-9]+" \
             | sed -E 's/.*at=0x([0-9a-f]+) len=([0-9]+)/\1 \2/' | sort -u \
             | while read -r a l; do printf "%x %x " $((16#$a)) $((16#$a + l)); done)
         [ -n "$ranges" ] || continue
