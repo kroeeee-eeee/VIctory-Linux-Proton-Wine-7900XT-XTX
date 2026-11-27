@@ -13,8 +13,9 @@ Experimental, and this repository makes that work and keeps it fast.
 |---|---|
 | Tested on | RX 7900 XT 20 GB, Ryzen 7 5800X3D, 32 GB RAM, Proton Experimental 11.0, Mesa/RADV |
 | Menus, videos | 30 fps (the title's cap) |
-| Open world (4,000-5,000 draws) | **~18-19 fps** (53-57 ms a frame) |
+| Open world (4,000-5,000 draws) | **~20-25 fps** standing (the RYUKI merge of 27 Nov: -5.9 ms a frame against the build before, measured in alternating unattended runs) |
 | Very heavy views (8,000-10,000 draws) | **~16-17 fps** |
+| Turning the camera fast | drops further (streaming); the hardest case now |
 | Processor | all 16 threads of a 5800X3D at 65-80 % |
 | Stability | long sessions without GPU hangs; saving and loading work |
 
@@ -22,8 +23,8 @@ The numbers need the huge pages of [`linux/thp/`](linux/thp/) (one `setcap`, see
 them it is luck, between ~9 and ~18 fps in the same scene.
 
 Not tested: NVIDIA (proprietary or NVK), Intel, AMD cards other than RDNA 3.
-**On Windows** use [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX)
-with its `scripts\play.ps1` (and a page file of 32 GB or more with 32 GB of RAM).
+**On Windows** use [RYUKI](https://github.com/YukiRyuu/RYUKI-7900XT) with its `scripts\play.ps1`
+(avatarmanz/VIctory-7900XTX, which this started from, is no longer on GitHub).
 
 ## What this repository changes for Linux
 
@@ -45,6 +46,19 @@ with its `scripts\play.ps1` (and a page file of 32 GB or more with 32 GB of RAM)
   (a userptr, ~185 MB) page by page on every submission, and with 4 KiB pages that kept the
   `vkd3d_queue` thread at 100 % of a core. The start script collapses it into 2 MiB pages from
   outside the process (`process_madvise(MADV_COLLAPSE)`): ~9 -> ~18-19 fps in the same scene.
+- **RYUKI merged** (27 Nov, [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT), on the
+  same base): frame generation (off), freeze fix (off), audio outputs, several merged fixes, an
+  adaptive texture cap (`VICTORY_TEXTURE_MAX`, off in the script).
+- **Compute passes wait for their pipeline** (`VICTORY_COMPUTE_WAIT_MS=500`, datingesp-hash's
+  PR #2, after avatarmanz #440): heads stayed without skin when the faces' one blend-shape pass
+  was dropped.
+- **`memcmp` of victory.exe** (`victory-memfast`): Wine's `ucrtbase` compares 8 bytes a step; the
+  layer's threads spent a third of their time in it. AVX2, 64 bytes a step.
+- **Guards under Wine**: placeholder reservations tracked by the layer (Wine has no
+  `MemoryRegionInformationEx`), port 2 without write watch on the 32-bit heap, unguarding in runs,
+  `VICTORY_STORE_BESIDE` (faulting title stores done through our own view: no protection changes).
+- **Measured defaults** in the script: card buffer copies from 64 KiB (at most 1 GiB), the code's
+  own thread counts (RYUKI's JOIN_PARTS=16 / THIN_THREADS=4 measured 2.2 ms slower here).
 - **[`linux/victory-proton.sh`](linux/victory-proton.sh)**: a start script with the
   settings that worked best.
 
@@ -147,7 +161,7 @@ Logs are in `LOGDIR` (default `~/victory-logs/run-*.txt`).
 
 ## License and credits
 
-GPL-3.0, as the projects it builds on: [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX),
+GPL-3.0, as the projects it builds on: avatarmanz/VIctory-7900XTX, [RYUKI](https://github.com/YukiRyuu/RYUKI-7900XT),
 [fxceless/victory-fork](https://github.com/fxceless/victory-fork) and the forks credited in
 [README.md](README.md). The ocean copy-back idea for floating boats goes back to
 Geckomacabre's vx-layer via Neptune_VI, the vkd3d SQC fault analysis was done with

@@ -467,26 +467,6 @@ fn open(device: &ID3D12Device1, blob: Blob) -> Option<Library> {
         return None;
     }
     let make = |bytes: &[u8]| -> windows::core::Result<ID3D12PipelineLibrary1> {
-        if bytes.is_empty() {
-            // An empty library is asked for with a null blob: vkd3d-proton
-            // refuses a pointer with a length of 0 (E_INVALIDARG,
-            // `d3d12_pipeline_library_init`), and an empty slice's pointer
-            // is not null. Without this, runs under Proton had no library
-            // ("no host pipeline library: pipelines are not kept").
-            let mut out = std::ptr::null_mut();
-            // SAFETY: the host's own method, with a null blob of length 0.
-            unsafe {
-                (windows::core::Interface::vtable(device).CreatePipelineLibrary)(
-                    windows::core::Interface::as_raw(device),
-                    std::ptr::null(),
-                    0,
-                    &<ID3D12PipelineLibrary as windows::core::Interface>::IID,
-                    &mut out,
-                )
-                .ok()?;
-                return <ID3D12PipelineLibrary as windows::core::Interface>::from_raw(out).cast();
-            }
-        }
         // SAFETY: the bytes outlive the library (kept beside it).
         unsafe {
             device.CreatePipelineLibrary::<ID3D12PipelineLibrary>(bytes)?.cast()
@@ -518,7 +498,30 @@ fn open(device: &ID3D12Device1, blob: Blob) -> Option<Library> {
     // The rejected bytes are let go (a mapped file is unmapped) before the
     // empty library is made: nothing reads them any more.
     drop(blob);
-    let library = make(&[]).ok()?;
+    // The slice wrapper passes a non-null pointer even for zero bytes.
+    // vkd3d-proton requires a null blob pointer to create an empty library
+    // (ported from klbf/gmankab 7afe3f77, Marvisak/VIctory#347).
+    let mut raw = std::ptr::null_mut();
+    // SAFETY: no blob is read, and a successful output is an owned interface.
+    let made = unsafe {
+        (device.vtable().CreatePipelineLibrary)(
+            device.as_raw(),
+            std::ptr::null(),
+            0,
+            &ID3D12PipelineLibrary::IID,
+            &raw mut raw,
+        )
+        .ok()
+        .and_then(|()| {
+            if raw.is_null() {
+                return Err(windows::Win32::Foundation::E_POINTER.into());
+            }
+            ID3D12PipelineLibrary::from_raw(raw).cast::<ID3D12PipelineLibrary1>()
+        })
+    };
+    let library = made
+        .map_err(|e| tracing::info!(error = %e, "the host refused an empty pipeline library"))
+        .ok()?;
     Some(Library {
         library,
         _blob: Blob::None,

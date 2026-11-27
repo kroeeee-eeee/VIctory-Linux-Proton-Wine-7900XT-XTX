@@ -35,7 +35,9 @@ for kv in VICTORY_TEXTURE_NO_WAIT=1 VICTORY_RELAY=2 VICTORY_WIDE_BACK=1 VICTORY_
     VICTORY_THIN=1 VICTORY_JOIN_PARTS=8 VICTORY_UPLOAD_AHEAD=1 \
     VICTORY_PORT_DESCRIPTORS=1 VICTORY_PORT_GUARD=1 VICTORY_PORT_JOURNAL=1 VICTORY_PORT_CBV=1 \
     VICTORY_PORT_CONSTANTS=1 VICTORY_COPY_COMPARE=1 VICTORY_ONE_PAD=0 VICTORY_FRAME_INTERVAL_MS=0 \
-    VICTORY_CARD_BUFFERS_MIN_KB=64 VICTORY_COMPUTE_WAIT_MS=500; do
+    VICTORY_CARD_BUFFERS_MIN_KB=64 VICTORY_COMPUTE_WAIT_MS=500 \
+    VICTORY_STORE_BESIDE=1 VICTORY_CARD_BUFFERS_MB=1024 VICTORY_TEXTURE_MAX_DIM=2048 \
+    VICTORY_TEXTURE_MAX=0 VICTORY_PAD_FOCUS=1 NO_COLOR=1; do
     k=${kv%%=*}
     [ -z "${!k+x}" ] && export "$kv"
 done
@@ -50,6 +52,15 @@ export RADV_DEBUG="${RADV_DEBUG-}"
 # anonymous memory; the patch backs the title's 32-bit heap with private pages).
 # VICTORY_FRAME_INTERVAL_MS=0: the title's own 30 fps cap off (frame and sim
 # rate patched to "no limit"; plays normally). 33.333 puts the cap back.
+# VICTORY_STORE_BESIDE=1: a title store that faults on a guarded block is done
+#   through our own view instead of opening the block (two protection changes
+#   under Wine's process-wide lock each): ~1.9 ms a frame here.
+# VICTORY_CARD_BUFFERS_MB=1024: at most 1 GiB of buffer copies in the card's
+#   memory, VICTORY_TEXTURE_MAX_DIM=2048 the largest BC textures' top level
+#   left out: VRAM headroom (a desktop compositor can crash when VRAM is full).
+# VICTORY_TEXTURE_MAX=0: RYUKI's adaptive texture cap off (unset: 1024, then
+#   512/256 as VRAM fills; sharper pictures with it off).
+# VICTORY_PAD_FOCUS=1: pads read only while the game window has focus.
 # VICTORY_ONE_PAD=0: the fork's keyboard stand-in pad is not merged with real
 # pads (an analog keyboard's gamepad mode would get every key twice).
 # Devices that pretend to be joysticks can steer on their own: list them as
