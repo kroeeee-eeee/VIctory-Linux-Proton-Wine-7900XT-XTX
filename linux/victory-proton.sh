@@ -37,7 +37,7 @@ for kv in VICTORY_TEXTURE_NO_WAIT=1 VICTORY_RELAY=2 VICTORY_WIDE_BACK=1 VICTORY_
     VICTORY_PORT_CONSTANTS=1 VICTORY_COPY_COMPARE=1 VICTORY_ONE_PAD=0 VICTORY_FRAME_INTERVAL_MS=0 \
     VICTORY_CARD_BUFFERS_MIN_KB=64 VICTORY_COMPUTE_WAIT_MS=500 \
     VICTORY_STORE_BESIDE=1 VICTORY_CARD_BUFFERS_MB=1024 VICTORY_TEXTURE_MAX_DIM=2048 \
-    VICTORY_TEXTURE_MAX=0 VICTORY_PAD_FOCUS=1 NO_COLOR=1; do
+    VICTORY_TEXTURE_MAX=0 VICTORY_TEXTURE_ROOM_PERCENT=72 VICTORY_PAD_FOCUS=1 NO_COLOR=1; do
     k=${kv%%=*}
     [ -z "${!k+x}" ] && export "$kv"
 done
@@ -60,6 +60,10 @@ export RADV_DEBUG="${RADV_DEBUG-}"
 #   left out: VRAM headroom (a desktop compositor can crash when VRAM is full).
 # VICTORY_TEXTURE_MAX=0: RYUKI's adaptive texture cap off (unset: 1024, then
 #   512/256 as VRAM fills; sharper pictures with it off).
+# VICTORY_TEXTURE_ROOM_PERCENT=72: textures picked by index made only up to
+#   72 % of the card's budget (code default 90). Turning the camera filled
+#   VRAM to 18.2-18.9 of 20.5 GB on an RX 7900 XT; with 72 the peak was
+#   15.7 GB, same fps, textures still sharp. 16 GB cards may want less.
 # VICTORY_PAD_FOCUS=1: pads read only while the game window has focus.
 # VICTORY_ONE_PAD=0: the fork's keyboard stand-in pad is not merged with real
 # pads (an analog keyboard's gamepad mode would get every key twice).

@@ -15,7 +15,7 @@ Experimental, and this repository makes that work and keeps it fast.
 | Menus, videos | 30 fps (the title's cap) |
 | Open world (4,000-5,000 draws) | **~20-25 fps** standing (the RYUKI merge of 27 Nov: -5.9 ms a frame against the build before, measured in alternating unattended runs) |
 | Very heavy views (8,000-10,000 draws) | **~16-17 fps** |
-| Turning the camera fast | drops further (streaming); the hardest case now |
+| Turning the camera fast | ~13-14 fps (72-75 ms a frame): the title's write faults wait for the guards' lock about twice as long as standing; the hardest case now. VRAM peak 15.7 GB with the script's texture room of 72 % (18.2-18.9 GB at the code's 90 %) |
 | Processor | all 16 threads of a 5800X3D at 65-80 % |
 | Stability | long sessions without GPU hangs; saving and loading work |
 
