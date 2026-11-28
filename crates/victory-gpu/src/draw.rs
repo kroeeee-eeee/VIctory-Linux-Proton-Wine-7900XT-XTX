@@ -1615,9 +1615,12 @@ impl State {
             // Its geometry stage would turn each triangle into a rectangle.
             once!("a rectangle pipeline drawn with another topology");
         }
+        let binding = crate::timeline::span("prepare: bind (pipeline, tables)");
         if !self.bind(list, p, false) {
             return false;
         }
+        drop(binding);
+        let _vertex = crate::timeline::span("prepare: vertex, index buffers, targets");
         let l = &list.list;
         // Vertex buffers the input layout reads.
         let mut views = [D3D12_VERTEX_BUFFER_VIEW::default(); 32];
@@ -1789,6 +1792,7 @@ impl State {
         // slots).
         let spans = if table_stages() { stage_spans(p) } else { Few::default() };
         let mut staged: Few<(u64, u32), 16> = Few::default();
+        let _tables = crate::timeline::span("bind: the stages' tables");
         for stage in &p.stages {
             let t = stage.translated();
             STORES.set(t.stores);
@@ -3770,16 +3774,38 @@ impl State {
                 // This reader had it brought up to date, and nothing in the
                 // list changed since: nothing to do again.
                 let once = ready_once() && selected.is_empty() && !group.has_uav;
-                if once
-                    && known.epoch == list.epoch()
-                    && let Some((_, depth)) = known.ready.iter().find(|(r, _)| *r == reader)
+                #[cfg(feature = "diagnostics")]
                 {
-                    if *depth {
+                    let i = if !once {
+                        1
+                    } else if known.epoch != list.epoch() {
+                        2
+                    } else if !known.ready.iter().any(|(r, _)| *r == reader) {
+                        3
+                    } else {
+                        0
+                    };
+                    TABLE_REUSE[i].fetch_add(1, Ordering::Relaxed);
+                    TABLE_REUSE[5].fetch_add(u64::from(n), Ordering::Relaxed);
+                }
+                let now = list.epoch();
+                if once
+                    && let Some(&(_, depth)) = known.ready.iter().find(|(r, _)| *r == reader)
+                    && (known.epoch == now
+                        || (crate::host::table_textures() && list.moved_only_others(known.epoch, &known.textures)))
+                {
+                    #[cfg(feature = "diagnostics")]
+                    if known.epoch != now {
+                        TABLE_REUSE[7].fetch_add(1, Ordering::Relaxed);
+                    }
+                    known.epoch = now;
+                    if depth {
                         TESTED_DEPTH.set((reader.3, true));
                     }
                     made.push((slot, first * 32));
                     continue;
                 }
+                crate::host::collect_textures();
                 let depth_before = TESTED_DEPTH.get();
                 TESTED_DEPTH.set((depth_before.0, false));
                 // Found in the table an earlier stage of this draw made
@@ -3822,13 +3848,27 @@ impl State {
                 }
                 let depth = TESTED_DEPTH.get().1;
                 TESTED_DEPTH.set((depth_before.0, depth_before.1 || depth));
+                let read = crate::host::collected_textures();
                 if once && let Some(known) = self.fresh_tables.get_mut(&key) {
                     // (The epoch as it is now: what this changed itself it
                     // need not do again.)
                     let epoch = list.epoch();
-                    if known.epoch != epoch {
+                    // Readers that had it brought up to date stay so if the
+                    // epoch moved over other textures only (this walk's own
+                    // changes among them: of a texture the table read before,
+                    // they end the others' turn).
+                    let others_stay = known.epoch != epoch
+                        && crate::host::table_textures()
+                        && list.moved_only_others(known.epoch, &known.textures);
+                    if known.epoch != epoch && !others_stay {
                         known.epoch = epoch;
                         known.ready.clear();
+                        known.textures = read;
+                    } else {
+                        known.epoch = epoch;
+                        known.textures.extend(read);
+                        known.textures.sort_unstable();
+                        known.textures.dedup();
                     }
                     if known.ready.len() < 16 {
                         known.ready.push((reader, depth));
@@ -3843,7 +3883,12 @@ impl State {
                 made.push((slot, u32::MAX));
                 continue;
             };
-            self.fresh_tables.insert(key, FreshTable { first, epoch: 0, ready: Vec::new() });
+            #[cfg(feature = "diagnostics")]
+            {
+                TABLE_REUSE[4].fetch_add(1, Ordering::Relaxed);
+                TABLE_REUSE[6].fetch_add(u64::from(n), Ordering::Relaxed);
+            }
+            self.fresh_tables.insert(key, FreshTable { first, epoch: 0, ready: Vec::new(), textures: Vec::new() });
             if !spans.is_empty() {
                 staged.push((table, n));
             }
@@ -4348,7 +4393,10 @@ impl State {
         }
         // One record without a count: clamped in a batch (`batches`).
         let batch = if batches() > 0 && max == 1 && count.is_none() {
+            let _s = crate::timeline::span("indirect: arguments refreshed (batch)");
             args.refresh(list, arguments, len);
+            drop(_s);
+            let _s = crate::timeline::span("indirect: batched clamp");
             self.batched(list, &args, arguments, kind)
         } else {
             None
@@ -4403,10 +4451,13 @@ impl State {
                     }
                     _ => (stride, max),
                 };
+                let refreshing = crate::timeline::span("indirect: arguments refreshed");
                 args.refresh(list, arguments, len.max(u64::from(step) * u64::from(records)));
                 if let Some((s, at)) = &counter {
                     s.refresh(list, *at, 4);
                 }
+                drop(refreshing);
+                let _clamping = crate::timeline::span("indirect: clamp");
                 // Bounded first: the clamp binds a compute pipeline of its
                 // own and copies clamped active records into a scratch
                 // buffer at offset 0.
@@ -4437,16 +4488,19 @@ impl State {
                 (bounded, 0)
             }
         };
+        let preparing = crate::timeline::span("indirect: state bound again");
         let ran = match kind {
             DRAW | INDEXED => self.prepare(list, kind == INDEXED),
             MESH => self.prepare_for(list, false, true),
             DISPATCH => self.bind(list, p, true),
             _ => false,
         };
+        drop(preparing);
         if !ran {
             why("prepare failed");
             return false;
         }
+        let _executing = crate::timeline::span("indirect: the host's ExecuteIndirect");
         #[cfg(feature = "diagnostics")]
         list.note_op(|| {
             self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
@@ -4654,6 +4708,27 @@ struct FreshTable {
     /// tested depth target.
     epoch: u64,
     ready: Vec<((usize, usize, bool, usize), bool)>,
+    /// The textures (keys of the list's states) its walks brought up to date
+    /// since `epoch` ([`crate::host::table_textures`]).
+    textures: Vec<usize>,
+}
+
+/// (Diagnostics) Tables met again in a list: left as they were, gone through
+/// because the group cannot be (UAVs, selected entries), because the list's
+/// epoch moved, because this reader had not read it; tables made afresh; the
+/// entries of the tables met again, and of those made afresh.
+#[cfg(feature = "diagnostics")]
+pub(crate) static TABLE_REUSE: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+
+/// (Diagnostics) The frame line of [`TABLE_REUSE`].
+#[cfg(feature = "diagnostics")]
+pub(crate) fn table_reuse_line(frames: f64) {
+    let n: Vec<f64> = TABLE_REUSE.iter().map(|c| c.swap(0, Ordering::Relaxed) as f64 / frames).collect();
+    tracing::info!(
+        "tables met again per frame: {:.0} left as they were ({:.0} of them over moves of other textures, VICTORY_TABLE_TEXTURES), {:.0} gone through (group has UAVs or selected entries), {:.0} (epoch moved), {:.0} (another reader); {:.0} made afresh; entries {:.0} met again, {:.0} made afresh",
+        n[0], n[7], n[1], n[2], n[3], n[4], n[5], n[6]
+    );
+    crate::host::epoch_moves_line(frames);
 }
 
 /// Whether a table a list reads again, with nothing changed in the list

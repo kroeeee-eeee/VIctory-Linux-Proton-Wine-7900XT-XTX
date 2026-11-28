@@ -9,6 +9,60 @@ generation's frames, "rendered" the title's own.
 Changes before this base (the older RYUKI line on avatarmanz's tree) are in CHANGELOG.md on the
 branch `xtx-2026-11-27`.
 
+## 2026-11-28 (Linux / Proton fork)
+
+Measured under Linux: RX 7900 XT 20 GB, Ryzen 7 5800X3D, 32 GB RAM, Proton Experimental 11 with
+the view-tree wineserver and huge pages for renderer port 1, diagnostics builds, unattended runs
+from the same save in the same house (`victory-abtest`; standing, or turning the camera all the
+time). In-run A/B: phases of 20 s alternating inside one run (`VICTORY_AB`), compared with the
+scene's draw count taken out.
+
+### Textures by index only up to 72 % of the VRAM budget (launch script)
+`VICTORY_TEXTURE_ROOM_PERCENT=72` (code default 90). Turning the camera filled VRAM to 18.2-18.9
+of 20.5 GB (a desktop compositor can crash when VRAM runs out); with 72 the peak was 15.7 GB, the
+frame time the same (72.8 against 72-75 ms) and the textures sharp.
+
+### Faces: bake draws wait longer for their sources (launch script; not measured yet)
+`VICTORY_BAKE_TEXTURES_MS=10000` (1500), `VICTORY_EARLY_TEXTURES_MS=40` (12), from a tester's set
+on Discord. The title bakes its characters' skin from textures picked by index while it loads;
+what is not on the card then is baked as nothing for the session. Effect on the faces not yet
+checked in play; loads may take longer.
+
+### Diagnostics: where the recording threads' time goes
+- The guards' lock taken alone, by line of `watch.rs`: times, ms waited, ms held (frame line
+  "the guards' lock taken alone"). Turning: the takers hold it briefly but wait long for shared
+  holders; under Wine a waiting writer holds back new readers (the title's write faults waited
+  12.5 ms a frame for the lock turning, 6.6 standing).
+- Timeline spans inside `ExecuteIndirect`, `prepare` and `bind`; counters of fresh tables met
+  again and of what moves a host list's epoch (frame lines "tables met again", "host lists'
+  epochs moved").
+- Findings (perf, `kernel.perf_event_paranoid=1`, and the timeline): our 8 list threads use as
+  much CPU as the title (4.3 cores each on 8 physical cores). Of their time 58 % is
+  `State::tables`: about 5,500 binds a frame walk 434,000 table entries, 168 ms of CPU, because
+  the fresh-table cache hits 10 % of the time: the list's epoch moves about 3,700 times a frame,
+  nearly once a draw, and a table's readers are cleared at each walk. 3,800 `ExecuteIndirect` a
+  frame cost 32 us each, nearly all of it binding state again. Proton Experimental 11's
+  `RtlQueryPerformanceCounter` is always a syscall: every `Instant::now` enters the kernel.
+
+### Experimental, off: fresh tables kept over other textures' moves (`VICTORY_TABLE_TEXTURES=1`)
+The epoch moves as before; each list logs why (a texture's state, or anything else), and a fresh
+table met again after moves of other textures only is taken as up to date. In-run A/B standing:
+-2.0 ms (noise level); the log rescued few tables because readers are cleared at every walk.
+Off until that part is done.
+
+### Tried, not kept
+- `VICTORY_GUARD_HOT=200` turning: +0.8 ms (few blocks qualify).
+- The guards' lock taken shared for remaps/unmaps of untracked memory: +0.2 %, remaps are rare
+  per frame (reverted).
+- Short-lived upload/shared/UAV buffers made resident without waits (after "VIctory AMD",
+  `VICTORY_BUFFER_WAIT`): -0.3 ms turning; the "waited until mapped" time (13 ms a frame turning)
+  is texture-pool blocks, off the frame's path (reverted).
+- A list's first use of a texture and unchanged `settle`s leaving the epoch as it is: moves
+  3,457 -> 1,371 a frame, table hits unchanged (reverted).
+- `VICTORY_WINDOWS_BAR_MB=2048` with `VICTORY_CARD_WINDOWS_MB=1024` (a tester's NVIDIA set):
+  copy-back 150 ms a frame instead of 7, 4.5 fps. Title windows in card memory are read back over
+  PCIe here.
+
 ## 2026-11-27
 
 ### Tried, not kept: eight list threads

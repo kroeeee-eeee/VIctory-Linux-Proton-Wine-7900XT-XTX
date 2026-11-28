@@ -1343,6 +1343,10 @@ pub(crate) struct HostList {
     /// list names alive until it is reset, even if the title releases the
     /// resource first.
     states: Mutex<States>,
+    /// Why the epoch moved since the list's reset, oldest first: the epoch
+    /// and the texture whose state changed, 0 for anything else
+    /// ([`table_textures`]).
+    moves: Mutex<Vec<(u64, usize)>>,
     /// What the list does with depth textures that have a colour twin, by
     /// twin ([`TwinUse`]).
     twins: Mutex<std::collections::HashMap<usize, TwinUse>>,
@@ -3861,6 +3865,8 @@ fn late_line(frames: f64) {
     crate::port::log(frames);
     crate::port_cbv::log(frames);
     crate::watch::port_guard_line(frames);
+    #[cfg(feature = "diagnostics")]
+    crate::draw::table_reuse_line(frames);
     crate::port_journal::line(frames);
     crate::picked::log(frames);
     #[cfg(feature = "diagnostics")]
@@ -4310,6 +4316,7 @@ impl Host {
                 deferred: Mutex::default(),
                 scratch: Mutex::default(),
                 states: Mutex::default(),
+                moves: Mutex::default(),
                 twins: Mutex::default(),
                 prelude,
                 pipelines,
@@ -6648,6 +6655,13 @@ impl HostList {
         *self.coming.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.deferred() = Deferred::default();
         self.states.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        {
+            // A new recording: what came before is no reason any more, and
+            // the reset itself is a move for everything.
+            let mut moves = self.moves.lock().unwrap_or_else(|e| e.into_inner());
+            moves.clear();
+            moves.push((self.epoch(), 0));
+        }
         self.twins.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).clear();
         #[cfg(feature = "diagnostics")]
@@ -6688,8 +6702,67 @@ impl HostList {
     /// Something changed in this list that bringing a draw's textures and
     /// buffers up to date depends on: a texture's state, a twin, what was
     /// refreshed.
+    #[track_caller]
     pub(crate) fn changed_something(&self) {
-        self.epoch.store(next_epoch(), Ordering::Relaxed);
+        #[cfg(feature = "diagnostics")]
+        {
+            let line = std::panic::Location::caller().line();
+            *EPOCH_MOVES.lock().unwrap_or_else(|e| e.into_inner()).entry(line).or_default() += 1;
+        }
+        self.moved(0);
+    }
+
+    /// [`HostList::changed_something`] for a change of the state of the
+    /// texture whose list state is `key`, and nothing else.
+    #[track_caller]
+    fn changed_texture(&self, key: usize) {
+        #[cfg(feature = "diagnostics")]
+        {
+            let line = std::panic::Location::caller().line();
+            *EPOCH_MOVES.lock().unwrap_or_else(|e| e.into_inner()).entry(line).or_default() += 1;
+        }
+        self.moved(key);
+    }
+
+    /// Moves the epoch, and logs why: `key` the texture whose state changed,
+    /// 0 anything else ([`table_textures`]).
+    fn moved(&self, key: usize) {
+        let epoch = next_epoch();
+        self.epoch.store(epoch, Ordering::Relaxed);
+        // (Kept whether the switch is on or not: an in-run A/B turns it on
+        // with the log complete.)
+        let mut moves = self.moves.lock().unwrap_or_else(|e| e.into_inner());
+        // A log that grew long says little: one move for all of it.
+        if moves.len() >= 4096 {
+            moves.clear();
+            moves.push((epoch, 0));
+        } else {
+            moves.push((epoch, key));
+        }
+    }
+
+    /// Whether every move of the epoch after `since` was a state change of a
+    /// texture not in `textures` (sorted) ([`table_textures`]).
+    pub(crate) fn moved_only_others(&self, since: u64, textures: &[usize]) -> bool {
+        let moves = self.moves.lock().unwrap_or_else(|e| e.into_inner());
+        // (A clear of the log, at a reset or when it grew long, leaves a move
+        // for everything at its start, later than any `since` before it.)
+        let from = moves.partition_point(|&(epoch, _)| epoch <= since);
+        #[cfg(feature = "diagnostics")]
+        {
+            let after = &moves[from..];
+            let why = if after.iter().any(|&(_, key)| key == 0) {
+                if after.first().is_some_and(|&(_, key)| key == 0) && after.len() == 1 { 1 } else { 2 }
+            } else if after.iter().any(|&(_, key)| textures.binary_search(&key).is_ok()) {
+                3
+            } else {
+                0
+            };
+            WHY_NOT[why].fetch_add(1, Ordering::Relaxed);
+            WHY_NOT[4].fetch_add(after.len() as u64, Ordering::Relaxed);
+            WHY_NOT[5].fetch_add(textures.len() as u64, Ordering::Relaxed);
+        }
+        moves[from..].iter().all(|&(_, key)| key != 0 && textures.binary_search(&key).is_err())
     }
 
     /// See [`HostList::changed_something`].
@@ -6712,16 +6785,18 @@ impl HostList {
         let texture: &'static ID3D12Resource = unsafe { &*std::ptr::from_ref(&copy.texture) };
         let wanted = legal_for(copy.flags(), wanted);
         let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
-        match states.entry(std::sync::Arc::as_ptr(&copy) as usize) {
+        let key = std::sync::Arc::as_ptr(&copy) as usize;
+        read_texture(key);
+        match states.entry(key) {
             std::collections::hash_map::Entry::Vacant(v) => {
                 v.insert((wanted, wanted, copy));
-                self.changed_something();
+                self.changed_texture(key);
                 None
             }
             std::collections::hash_map::Entry::Occupied(mut o) => {
                 let before = std::mem::replace(&mut o.get_mut().1, wanted);
                 if before != wanted {
-                    self.changed_something();
+                    self.changed_texture(key);
                 }
                 (before != wanted).then_some((texture, before))
             }
@@ -6734,9 +6809,11 @@ impl HostList {
     /// host copy (colour twins) and for the copies between the two.
     fn settle(&self, copy: &std::sync::Arc<crate::resource::HostTexture>, wanted: u32) {
         let wanted = legal_for(copy.flags(), wanted);
-        self.changed_something();
+        let key = std::sync::Arc::as_ptr(copy) as usize;
+        read_texture(key);
+        self.changed_texture(key);
         let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
-        let before = match states.entry(std::sync::Arc::as_ptr(copy) as usize) {
+        let before = match states.entry(key) {
             std::collections::hash_map::Entry::Vacant(v) => {
                 v.insert((wanted, wanted, copy.clone()));
                 None
@@ -11653,4 +11730,79 @@ fn front_known() -> bool {
     }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VICTORY_FRONT_KNOWN").is_some_and(|v| v == "1"))
+}
+
+/// Whether a fresh table met again after its list's epoch moved is still
+/// taken as brought up to date when every move since was a state change of
+/// a texture it did not read (`VICTORY_TABLE_TEXTURES=1`; off by default:
+/// any move makes it gone through again, entry by entry). The epoch itself moves
+/// as it always did; the list keeps a log of why ([`HostList::moves`]).
+/// Standing in the world the epoch moved about 3,700 times a frame, nearly
+/// once a draw, so 4,100 of the 6,900 tables met again a frame were walked
+/// again (434,000 entries, 168 ms of the recording threads' time; 28 Nov).
+/// Experimental: in-run A/B -2.0 ms (noise level, 28 Nov); its log rescued
+/// few tables because a table's readers are cleared at every walk.
+pub(crate) fn table_textures() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if let Some(on) = crate::ab::pick("VICTORY_TABLE_TEXTURES") {
+        return on;
+    }
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_TABLE_TEXTURES").is_some_and(|v| v == "1"))
+}
+
+thread_local! {
+    /// The textures a table walk ([`crate::draw`]) brought up to date: the
+    /// keys of the list's states ([`HostList::transition`], `settle`) taken
+    /// while it collects.
+    static READ_TEXTURES: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Notes `key` as read by the table walk collecting on this thread.
+fn read_texture(key: usize) {
+    READ_TEXTURES.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.push(key);
+        }
+    });
+}
+
+/// Starts collecting the textures a table walk reads ([`read_texture`]).
+pub(crate) fn collect_textures() {
+    READ_TEXTURES.set(Some(Vec::new()));
+}
+
+/// Ends [`collect_textures`]: the keys read, sorted and without repeats.
+pub(crate) fn collected_textures() -> Vec<usize> {
+    let mut v = READ_TEXTURES.take().unwrap_or_default();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// (Diagnostics) Looks at the move log ([`HostList::moved_only_others`]):
+/// passed; failed on a lone move for everything; on one among others; on a
+/// texture of the table's own; moves looked at; the tables' textures.
+#[cfg(feature = "diagnostics")]
+pub(crate) static WHY_NOT: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
+/// (Diagnostics) Moves of host lists' epochs ([`HostList::changed_something`])
+/// by the line that moved them.
+#[cfg(feature = "diagnostics")]
+static EPOCH_MOVES: std::sync::Mutex<std::collections::BTreeMap<u32, u64>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// (Diagnostics) The frame line of [`EPOCH_MOVES`].
+#[cfg(feature = "diagnostics")]
+pub(crate) fn epoch_moves_line(frames: f64) {
+    let by = std::mem::take(&mut *EPOCH_MOVES.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let text: Vec<String> = by.iter().map(|(line, n)| format!("host.rs:{line} {:.0}", *n as f64 / frames)).collect();
+    tracing::info!("host lists' epochs moved per frame, by line: {}", text.join(", "));
+    let w: Vec<f64> = WHY_NOT.iter().map(|c| c.swap(0, Ordering::Relaxed) as f64 / frames).collect();
+    let looks = (w[0] + w[1] + w[2] + w[3]).max(1.0);
+    tracing::info!(
+        "move log looked at per frame: {:.0} passed, failed on a lone move for everything {:.0}, on one among others {:.0}, on a texture of its own {:.0}; {:.1} moves and {:.1} textures a look",
+        w[0], w[1], w[2], w[3], w[4] / looks, w[5] / looks
+    );
 }

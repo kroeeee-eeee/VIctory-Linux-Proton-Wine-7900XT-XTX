@@ -59,6 +59,11 @@ Not tested: NVIDIA (proprietary or NVK), Intel, AMD cards other than RDNA 3.
   `VICTORY_STORE_BESIDE` (faulting title stores done through our own view: no protection changes).
 - **Measured defaults** in the script: card buffer copies from 64 KiB (at most 1 GiB), the code's
   own thread counts (RYUKI's JOIN_PARTS=16 / THIN_THREADS=4 measured 2.2 ms slower here).
+- **Where the CPU goes** (28 Nov, perf and the diagnostics timeline; details in
+  [CHANGELOG.md](CHANGELOG.md)): the layer's 8 list threads use as much CPU as the title, and 58 %
+  of their time is the descriptor tables a draw binds (434,000 table entries walked a frame, the
+  fresh-table cache hits 10 %). That is the next thing to make faster. Tried and not kept are
+  listed there too, with their numbers.
 - **[`linux/victory-proton.sh`](linux/victory-proton.sh)**: a start script with the
   settings that worked best.
 

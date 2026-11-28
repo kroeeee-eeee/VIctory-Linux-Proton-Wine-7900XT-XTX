@@ -1752,6 +1752,8 @@ pub(crate) fn port_guard_line(frames: f64) {
         n[P6_RESTED_HOT],
         n[P6_NOT_ASKED],
     );
+    #[cfg(feature = "diagnostics")]
+    guards_alone_line(frames);
 }
 
 /// The blocks known to be view memory (renderer port #6): guarded by us
@@ -2430,7 +2432,8 @@ pub(crate) fn asks() -> [u64; 13] {
 }
 
 /// The guards' lock, the wait for it counted.
-fn guards_timed() -> std::sync::RwLockWriteGuard<'static, Guards> {
+#[track_caller]
+fn guards_timed() -> Alone {
     #[cfg(feature = "diagnostics")]
     let started = std::time::Instant::now();
     let g = guards();
@@ -2734,11 +2737,95 @@ static GUARDS: RwLock<Guards> = RwLock::new(Guards {
 });
 
 /// The guards, alone.
-fn guards() -> std::sync::RwLockWriteGuard<'static, Guards> {
-    if let Ok(g) = GUARDS.try_write() {
-        return g;
+#[track_caller]
+fn guards() -> Alone {
+    #[cfg(feature = "diagnostics")]
+    let began = std::time::Instant::now();
+    let g = match GUARDS.try_write() {
+        Ok(g) => g,
+        Err(_) => waited(3, || GUARDS.write().unwrap_or_else(|e| e.into_inner())),
+    };
+    Alone {
+        g,
+        #[cfg(feature = "diagnostics")]
+        line: std::panic::Location::caller().line(),
+        #[cfg(feature = "diagnostics")]
+        began,
+        #[cfg(feature = "diagnostics")]
+        got: std::time::Instant::now(),
     }
-    waited(3, || GUARDS.write().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// The guards' lock held alone ([`guards`]). In a diagnostics build, the
+/// time it was waited for and held is counted by the line of `watch.rs`
+/// that took it ([`guards_alone_line`]): under Wine a writer that waits holds back
+/// every reader that comes after it (the title's write faults among them),
+/// so both count.
+struct Alone {
+    g: std::sync::RwLockWriteGuard<'static, Guards>,
+    #[cfg(feature = "diagnostics")]
+    line: u32,
+    #[cfg(feature = "diagnostics")]
+    began: std::time::Instant,
+    #[cfg(feature = "diagnostics")]
+    got: std::time::Instant,
+}
+
+impl std::ops::Deref for Alone {
+    type Target = Guards;
+    fn deref(&self) -> &Guards {
+        &self.g
+    }
+}
+
+impl std::ops::DerefMut for Alone {
+    fn deref_mut(&mut self) -> &mut Guards {
+        &mut self.g
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+impl Drop for Alone {
+    fn drop(&mut self) {
+        let now = std::time::Instant::now();
+        let wait = self.got.duration_since(self.began).as_nanos() as u64;
+        let held = now.duration_since(self.got).as_nanos() as u64;
+        let mut by = ALONE_BY.lock().unwrap_or_else(|e| e.into_inner());
+        let e = by.entry(self.line).or_default();
+        e[0] += 1;
+        e[1] += wait;
+        e[2] += held;
+        e[3] = e[3].max(held);
+    }
+}
+
+/// (Diagnostics) By line: times taken alone, ns waited, ns held, longest held.
+#[cfg(feature = "diagnostics")]
+static ALONE_BY: Mutex<BTreeMap<u32, [u64; 4]>> = Mutex::new(BTreeMap::new());
+
+/// (Diagnostics) The frame line of [`Alone`]: per frame, the lines that
+/// kept the lock alone longest (waiting and holding).
+#[cfg(feature = "diagnostics")]
+fn guards_alone_line(frames: f64) {
+    let by = std::mem::take(&mut *ALONE_BY.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by_key(|(_, e)| std::cmp::Reverse(e[1] + e[2]));
+    let text: Vec<String> = by
+        .iter()
+        .take(8)
+        .map(|(line, e)| {
+            format!(
+                "watch.rs:{line} {:.1}x waited {:.2} held {:.2} ms (longest {:.2})",
+                e[0] as f64 / frames,
+                e[1] as f64 / 1e6 / frames,
+                e[2] as f64 / 1e6 / frames,
+                e[3] as f64 / 1e6
+            )
+        })
+        .collect();
+    if !text.is_empty() {
+        tracing::info!("the guards' lock taken alone, per frame, by line: {}", text.join(", "));
+    }
 }
 
 /// The guards, shared (renderer port #6): what changes a block's state holds
@@ -4296,7 +4383,8 @@ fn forget_views(first: usize, last: usize) {
 
 /// Tells what keeps track of what title memory shows; the guards, with no
 /// block of the range known unmapped.
-fn title_memory_changed(at: usize, len: usize) -> std::sync::RwLockWriteGuard<'static, Guards> {
+#[track_caller]
+fn title_memory_changed(at: usize, len: usize) -> Alone {
     // A placed texture there arrives, goes or changes with no descriptor
     // written.
     crate::descriptor::host::remapped(at, len);
