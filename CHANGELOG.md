@@ -59,6 +59,10 @@ Off until that part is done.
   is texture-pool blocks, off the frame's path (reverted).
 - A list's first use of a texture and unchanged `settle`s leaving the epoch as it is: moves
   3,457 -> 1,371 a frame, table hits unchanged (reverted).
+- `VKD3D_CONFIG=descriptor_heap` (vkd3d-proton on RADV's `VK_EXT_descriptor_heap`), standing, 2+2
+  runs: -0.7 +- 1.2 ms, no clear gain (not set).
+- Our own writes ([`writing`]) opening their guarded blocks with the guards' lock shared, block
+  by block as a write fault does: turning +6.9 ms, median +22.8 % (reverted).
 - `VICTORY_WINDOWS_BAR_MB=2048` with `VICTORY_CARD_WINDOWS_MB=1024` (a tester's NVIDIA set):
   copy-back 150 ms a frame instead of 7, 4.5 fps. Title windows in card memory are read back over
   PCIe here.
