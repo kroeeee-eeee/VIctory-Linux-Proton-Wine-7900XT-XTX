@@ -59,6 +59,10 @@ Off until that part is done.
   is texture-pool blocks, off the frame's path (reverted).
 - A list's first use of a texture and unchanged `settle`s leaving the epoch as it is: moves
   3,457 -> 1,371 a frame, table hits unchanged (reverted).
+- Fresh tables' readers told apart by what they read (entries and kinds) instead of by the
+  plan, with the move log on: -1.1 ms, table hits 860 -> 1,313 of ~7,000 a frame; the ready list
+  is emptied by walks that change the table's own textures, and fresh tables live per list
+  (~23 binds). Not kept.
 - `VKD3D_CONFIG=descriptor_heap` (vkd3d-proton on RADV's `VK_EXT_descriptor_heap`), standing, 2+2
   runs: -0.7 +- 1.2 ms, no clear gain (not set).
 - Our own writes ([`writing`]) opening their guarded blocks with the guards' lock shared, block
