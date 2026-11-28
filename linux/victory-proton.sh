@@ -38,7 +38,7 @@ for kv in VICTORY_TEXTURE_NO_WAIT=1 VICTORY_RELAY=2 VICTORY_WIDE_BACK=1 VICTORY_
     VICTORY_CARD_BUFFERS_MIN_KB=64 VICTORY_COMPUTE_WAIT_MS=500 \
     VICTORY_STORE_BESIDE=1 VICTORY_CARD_BUFFERS_MB=1024 VICTORY_TEXTURE_MAX_DIM=2048 \
     VICTORY_TEXTURE_MAX=0 VICTORY_TEXTURE_ROOM_PERCENT=72 VICTORY_PAD_FOCUS=1 NO_COLOR=1 \
-    VICTORY_BAKE_TEXTURES_MS=10000 VICTORY_EARLY_TEXTURES_MS=40; do
+    VICTORY_BAKE_TEXTURES_MS=10000 VICTORY_EARLY_TEXTURES_MS=40 VICTORY_SOFT_VIEWS=copies; do
     k=${kv%%=*}
     [ -z "${!k+x}" ] && export "$kv"
 done
@@ -66,6 +66,10 @@ export RADV_DEBUG="${RADV_DEBUG-}"
 #   VRAM to 18.2-18.9 of 20.5 GB on an RX 7900 XT; with 72 the peak was
 #   15.7 GB, same fps, textures still sharp. 16 GB cards may want less.
 # VICTORY_PAD_FOCUS=1: pads read only while the game window has focus.
+# VICTORY_SOFT_VIEWS=copies: views of the title's page-mapping copies kept in the
+#   runtime's books until touched: turning the camera the title remaps ~5,000
+#   pages a second, and Wine's map/unmap calls for them were expensive. Turning:
+#   -5.1 ms a frame (2+2 runs), 0 differing pages in verify mode.
 # VICTORY_BAKE_TEXTURES_MS=10000, VICTORY_EARLY_TEXTURES_MS=40: the title bakes its
 #   characters' skin from textures while it loads; what is not on the card then
 #   is baked as nothing for the session. Bake draws wait up to 10 s for their

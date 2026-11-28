@@ -17,6 +17,17 @@ from the same save in the same house (`victory-abtest`; standing, or turning the
 time). In-run A/B: phases of 20 s alternating inside one run (`VICTORY_AB`), compared with the
 scene's draw count taken out.
 
+### Turning the camera: the page-mapping copies' views kept in the books (launch script, `VICTORY_SOFT_VIEWS=copies`)
+Op-lite's freeze fix as RYUKI ported it (left off there: no clear gain standing on Windows, and
+`verify` found 8 differing pages in 6 minutes). Turning the camera the title remaps about 5,000
+pages a second (`CopyPageMappingsBatchX`); each became a `MapViewOfFile3` and an
+`UnmapViewOfFile2`, and under Wine those calls took about 2.4 s of thread time per 5 s (longest
+over 100 ms). In the timeline the title's `CopyPageMappings` were 3.5 ms of each frame's chain.
+Kept in the runtime's books until touched, almost none ever is (0-1 per 5 s made real). 2+2
+alternating turning runs: -5.1 ms a frame (+-1.4 by lines; medians 56.7 and 57.1 against 52.4
+and 50.1 ms). `verify`, 5 minutes turning: 0 differing pages. Set by the start script; the code's
+default stays off.
+
 ### Our QueryPerformanceCounter from the TSC (`VICTORY_FAST_CLOCK`, on; `=0` the host's)
 Proton Experimental 11's `RtlQueryPerformanceCounter` is always a syscall (`NtQueryPerformanceCounter`
 through `__wine_syscall_dispatcher`, the whole CPU state saved and restored, for a
@@ -75,6 +86,10 @@ Off until that part is done.
   plan, with the move log on: -1.1 ms, table hits 860 -> 1,313 of ~7,000 a frame; the ready list
   is emptied by walks that change the table's own textures, and fresh tables live per list
   (~23 binds). Not kept.
+- Telling the GPU side of unmapped and remapped pages once per run of neighbouring pages instead
+  of page by page (`change` in `xmem.rs`), with the soft views on, turning: +1.3 ms. Not kept.
+- The title's own `QueryPerformanceCounter` (its import from `api-ms-win-core-profile-l1-1-0`)
+  from the same TSC clock: -0.1 ms, no crash; not kept (the title's timing stays the host's).
 - `VKD3D_CONFIG=descriptor_heap` (vkd3d-proton on RADV's `VK_EXT_descriptor_heap`), standing, 2+2
   runs: -0.7 +- 1.2 ms, no clear gain (not set).
 - Our own writes ([`writing`]) opening their guarded blocks with the guards' lock shared, block
