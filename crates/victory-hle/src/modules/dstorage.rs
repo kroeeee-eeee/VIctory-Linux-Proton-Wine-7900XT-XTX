@@ -1421,7 +1421,7 @@ mod repeats {
 }
 
 /// Decoded results of requests from files, kept to be copied again
-/// (`VICTORY_DSTORAGE_CACHE_MB`, 1024 unless given; 0: none). Turning the
+/// (`VICTORY_DSTORAGE_CACHE_MB`, 1536 unless given; 0: none). Turning the
 /// camera the title asked for about 5,900 decompressing requests a second
 /// (360 MB of output), 99.7 % of them the same as one asked before (same
 /// file, offset, sizes and options), and decoding them again (BCPack in
@@ -1448,7 +1448,7 @@ mod decoded {
     fn budget() -> usize {
         static MB: OnceLock<usize> = OnceLock::new();
         *MB.get_or_init(|| {
-            std::env::var("VICTORY_DSTORAGE_CACHE_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1024)
+            std::env::var("VICTORY_DSTORAGE_CACHE_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1536)
         }) << 20
     }
 
