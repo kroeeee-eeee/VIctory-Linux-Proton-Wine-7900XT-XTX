@@ -2150,6 +2150,9 @@ extern "system" fn barrier_groups(this: This, count: u32, _groups: *const u8) {
     #[cfg(all(windows, feature = "diagnostics"))]
     if count > 0 {
         crate::copystat::add(crate::copystat::C::WaitsForGroups, 1);
+        // SAFETY: the title's `count` groups, as D3D12's enhanced barriers
+        // lay them out.
+        unsafe { barrier_census::note(count, _groups) };
         if crate::copystat::barrier_test() & 1 != 0 {
             return;
         }
@@ -2167,6 +2170,85 @@ extern "system" fn barrier_groups(this: This, count: u32, _groups: *const u8) {
     }
     #[cfg(not(windows))]
     let _ = (this, count);
+}
+
+/// (Diagnostics) What the title's enhanced barriers ask for, by D3D12's
+/// layout of them (`D3D12_BARRIER_GROUP`: a type, a count, a pointer;
+/// global barriers of four 32-bit words: sync before and after, access
+/// before and after; texture barriers of those four, two layouts, the
+/// resource, a subresource range and flags, 64 bytes; buffer barriers of the
+/// four, the resource, an offset and a size, 40 bytes).
+#[cfg(all(windows, feature = "diagnostics"))]
+pub(crate) mod barrier_census {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    /// Calls; groups by type (global, texture, buffer); barriers by type;
+    /// barriers whose access before is a write (UAV, render target, depth
+    /// write, copy or resolve destination, stream output) by type; barriers
+    /// with no access before (`NO_ACCESS`) or sync before none; calls with a
+    /// write before in a global or buffer barrier; calls with only texture
+    /// barriers.
+    pub(crate) static N: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
+    const WRITE: u32 = 0x2 | 0x8 | 0x10 | 0x40 | 0x400 | 0x2000 | 0x4000 | 0x40_0000;
+    const NO_ACCESS: u32 = 0x8000_0000;
+
+    /// # Safety
+    /// `groups` points at `count` barrier groups as D3D12 lays them out.
+    pub(crate) unsafe fn note(count: u32, groups: *const u8) {
+        if groups.is_null() || count > 64 {
+            return;
+        }
+        N[0].fetch_add(1, Relaxed);
+        let (mut buffer_or_global_write, mut only_textures) = (false, true);
+        for g in 0..count as usize {
+            // SAFETY: as the caller says.
+            let (kind, n, at) = unsafe {
+                let p = groups.add(g * 16);
+                ((p as *const u32).read_unaligned(), (p.add(4) as *const u32).read_unaligned(), (p.add(8) as *const usize).read_unaligned())
+            };
+            if kind > 2 || at == 0 || n > 4096 {
+                continue;
+            }
+            N[1 + kind as usize].fetch_add(1, Relaxed);
+            N[4 + kind as usize].fetch_add(u64::from(n), Relaxed);
+            if kind != 1 {
+                only_textures = false;
+            }
+            let stride = [16, 64, 40][kind as usize];
+            for b in 0..n as usize {
+                // SAFETY: as the caller says.
+                let (sync_before, access_before) = unsafe {
+                    let p = (at + b * stride) as *const u32;
+                    (p.read_unaligned(), p.add(2).read_unaligned())
+                };
+                if access_before & NO_ACCESS != 0 || sync_before == 0 {
+                    N[10].fetch_add(1, Relaxed);
+                } else if access_before & WRITE != 0 {
+                    N[7 + kind as usize].fetch_add(1, Relaxed);
+                    if kind != 1 {
+                        buffer_or_global_write = true;
+                    }
+                }
+            }
+        }
+        if buffer_or_global_write {
+            N[11].fetch_add(1, Relaxed);
+        }
+        if only_textures {
+            N[12].fetch_add(1, Relaxed);
+        }
+    }
+
+    /// The frame line.
+    pub(crate) fn line(frames: f64) {
+        let n: Vec<f64> = N.iter().map(|c| c.swap(0, Relaxed) as f64 / frames).collect();
+        if n[0] == 0.0 {
+            return;
+        }
+        tracing::info!(
+            "enhanced barriers per frame: {:.0} calls; groups global {:.0}, texture {:.0}, buffer {:.0}; barriers global {:.0}, texture {:.0}, buffer {:.0}; of them after a write: global {:.0}, texture {:.0}, buffer {:.0}; with no access or sync before {:.0}; calls with a write in a global or buffer barrier {:.0}, with texture barriers only {:.0}",
+            n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], n[10], n[11], n[12]
+        );
+    }
 }
 
 /// The bottom-of-pipe value writes `(address, value, flush, flags)`, 32 and

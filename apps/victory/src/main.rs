@@ -194,6 +194,9 @@ fn parse_jobs(value: &str) -> Result<usize, &'static str> {
 
 fn main() -> Result<()> {
     victory_core::logging::init("info");
+    // Our own QueryPerformanceCounter from the TSC (Wine's is a syscall).
+    #[cfg(windows)]
+    victory_hle::fastclock::install();
     // victory.exe's own memcmp (Wine's compares 8 bytes a step): also keeps
     // the crate, and with it the symbol, in the link.
     tracing::info!("memcmp of victory.exe: victory-memfast, {}", victory_memfast::form());

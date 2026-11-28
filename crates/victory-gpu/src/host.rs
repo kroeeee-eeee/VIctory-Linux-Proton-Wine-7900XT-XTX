@@ -3867,6 +3867,8 @@ fn late_line(frames: f64) {
     crate::watch::port_guard_line(frames);
     #[cfg(feature = "diagnostics")]
     crate::draw::table_reuse_line(frames);
+    #[cfg(feature = "diagnostics")]
+    crate::list::barrier_census::line(frames);
     crate::port_journal::line(frames);
     crate::picked::log(frames);
     #[cfg(feature = "diagnostics")]

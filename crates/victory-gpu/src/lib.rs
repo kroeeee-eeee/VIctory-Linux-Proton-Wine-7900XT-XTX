@@ -16,6 +16,8 @@
 //! `present` (swap chain).
 
 #[cfg(windows)]
+pub mod fastclock;
+#[cfg(windows)]
 mod ambient;
 #[cfg(windows)]
 mod lightprobe;

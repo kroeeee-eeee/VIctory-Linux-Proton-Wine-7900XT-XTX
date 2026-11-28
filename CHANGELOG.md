@@ -17,6 +17,18 @@ from the same save in the same house (`victory-abtest`; standing, or turning the
 time). In-run A/B: phases of 20 s alternating inside one run (`VICTORY_AB`), compared with the
 scene's draw count taken out.
 
+### Our QueryPerformanceCounter from the TSC (`VICTORY_FAST_CLOCK`, on; `=0` the host's)
+Proton Experimental 11's `RtlQueryPerformanceCounter` is always a syscall (`NtQueryPerformanceCounter`
+through `__wine_syscall_dispatcher`, the whole CPU state saved and restored, for a
+`clock_gettime`): every `std::time::Instant::now` of ours was one, about 7 % of the list threads'
+time and 6 % of the submitting thread's in a CPU profile. At start victory.exe's own import of
+`kernel32!QueryPerformanceCounter` is pointed at the invariant TSC scaled to the host counter's
+ticks (calibrated over 20 ms, anchored to a real reading every 100 ms, the scale refined over the
+whole run); only with an invariant TSC (CPUID). The title's imports keep the host's counter.
+In-run A/B standing: -1.0 ms a frame (scatter 0.4 ms), median 40.0 -> 39.3 ms. A first version
+took the TSC delta unsigned: a reading just before another thread's re-anchor became 2^64 ticks
+in the future, durations of 10^12 ms in the log and a crash of the title; it is signed now.
+
 ### Textures by index only up to 72 % of the VRAM budget (launch script)
 `VICTORY_TEXTURE_ROOM_PERCENT=72` (code default 90). Turning the camera filled VRAM to 18.2-18.9
 of 20.5 GB (a desktop compositor can crash when VRAM runs out); with 72 the peak was 15.7 GB, the
