@@ -3819,7 +3819,10 @@ impl State {
                     .flatten();
                 for u in entries.iter().filter(|u| u.kind != ResourceType::Cbv) {
                     let handle = table + u64::from(u.table_offset_dwords) * 4;
-                    if let Some(view) = crate::descriptor::view(handle) {
+                    let looking = crate::timeline::span("walk: view looked up");
+                    let view = crate::descriptor::view(handle);
+                    drop(looking);
+                    if let Some(view) = view {
                         readable(list, u.kind, &view);
                         if let Some(title) = staged_title
                             && crate::descriptor::host::is_texture_view(&view)
@@ -4758,11 +4761,16 @@ impl RecordHash {
 
 fn readable(list: &HostList, kind: ResourceType, view: &View) {
     const UNORDERED_ACCESS: u32 = 0x8;
+    let _readable = crate::timeline::span("readable");
+    let s1 = crate::timeline::span("readable: placed texture, buffer copy");
     let placed = crate::descriptor::host::placed_texture(view);
     let view = placed.as_ref().unwrap_or(view);
+    let copy = crate::descriptor::host::buffer_copy(view);
+    drop(s1);
     // Buffer views read title memory: their range is copied at submission;
     // what shaders write through unordered access goes back to it after.
-    if let Some((shadow, address, len)) = crate::descriptor::host::buffer_copy(view) {
+    if let Some((shadow, address, len)) = copy {
+        let _r = crate::timeline::span("readable: buffer refresh");
         shadow.refresh(list, address, len);
         if kind == ResourceType::Uav {
             // A shader that cannot store to buffers leaves the range as
@@ -4785,6 +4793,7 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
             // A view the title placed, in another format, in the memory of
             // a texture the host writes: that texture's texels, copied on
             // the host (title memory does not have them).
+            let s2 = crate::timeline::span("readable: alias, upload check");
             let aliased = crate::resource::alias_of(*resource as This)
                 .is_some_and(|source| crate::texture::alias(list, *resource as This, source.get()));
             if !aliased
@@ -4800,7 +4809,9 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
                 };
                 crate::texture::upload_from(list, *resource as This, first);
             }
+            drop(s2);
             // A depth texture shaders also write: what they wrote, first.
+            let s3 = crate::timeline::span("readable: twin, state");
             list.twin_use(*resource as This, false, false);
             // The depth target the draw only tests is read in both ways at
             // once: both read states, which its preparation asks for too.
@@ -4812,6 +4823,7 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
                 SHADER_RESOURCE
             };
             crate::list::ensure_state(list, *resource as This, state);
+            drop(s3);
             #[cfg(feature = "diagnostics")]
             if tracing::enabled!(tracing::Level::DEBUG)
                 && let Some(t) = crate::resource::host_resource(*resource as This)

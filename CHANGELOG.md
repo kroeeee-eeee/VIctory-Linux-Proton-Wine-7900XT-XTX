@@ -17,6 +17,14 @@ from the same save in the same house (`victory-abtest`; standing, or turning the
 time). In-run A/B: phases of 20 s alternating inside one run (`VICTORY_AB`), compared with the
 scene's draw count taken out.
 
+### mimalloc as the Rust allocator (cargo feature `mimalloc`, on by default)
+The layer's Rust allocations went through the process heap it shares with the title and the
+drivers, under Wine Wine's own. With mimalloc (per-thread caches; after upstream VIctory, as
+carried by aszterrr/VIctory-NVIDIA-Azter 2653166, which measured 24.7 -> 26.9 fps on an RTX
+4090) the frame here is 0.8 ms shorter standing: 2+2 alternating runs, +0.8 +- 0.3 ms without it
+(medians 37.1/36.6 with, 37.3/37.5 without). Building it needs clang-cl (cargo-xwin's usual
+toolchain); `--no-default-features` builds without it.
+
 ### DirectStorage: decoded results kept (`VICTORY_DSTORAGE_CACHE_MB`, 1536 MB; 0: none)
 Turning the camera the title asked for about 5,900 decompressing requests a second (360 MB of
 output), and 99.7 % of them were the same as one asked before: same file, offset, sizes and
