@@ -17,6 +17,18 @@ from the same save in the same house (`victory-abtest`; standing, or turning the
 time). In-run A/B: phases of 20 s alternating inside one run (`VICTORY_AB`), compared with the
 scene's draw count taken out.
 
+### DirectStorage: decoded results kept (`VICTORY_DSTORAGE_CACHE_MB`, 1024 MB; 0: none)
+Turning the camera the title asked for about 5,900 decompressing requests a second (360 MB of
+output), and 99.7 % of them were the same as one asked before: same file, offset, sizes and
+options; about 81,000 distinct in a run, 10-20 new per 5 s. Each was read and decoded again
+(BCPack in software, half of it; zlib, a third), and the DirectStorage workers used 1.9 cores
+while turning (0.15 standing), beside the title's 3.5 and our list threads. Results of requests
+from the title's package files (which never change while it runs; requests from memory are not
+kept) are kept in two generations up to the budget and copied again. In-run A/B turning: about
+6,000 copied a second against 11-100 decoded; frame median 47.9 -> 44.6 ms (-6.9 %), slowest
+10 % 64.0 -> 57.6 ms; regression +1.3 ms at a scatter of 6.7 ms (noise). Also some hashed sets
+of the recording path use the address hasher instead of SipHash (not measured on its own).
+
 ### Turning the camera: the page-mapping copies' views kept in the books (launch script, `VICTORY_SOFT_VIEWS=copies`)
 Op-lite's freeze fix as RYUKI ported it (left off there: no clear gain standing on Windows, and
 `verify` found 8 differing pages in 6 minutes). Turning the camera the title remaps about 5,000

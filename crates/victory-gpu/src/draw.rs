@@ -721,7 +721,7 @@ pub(crate) struct BufferSweep {
     passes: u64,
     ranges: HeapRanges<std::sync::Arc<crate::shadow::Shadow>>,
     // Last refresh frame and covered interval for throttled, unwatched copies.
-    unwatched: std::collections::HashMap<u64, (u64, u64, u64)>,
+    unwatched: std::collections::HashMap<u64, (u64, u64, u64), std::hash::BuildHasherDefault<crate::host::AddressHash>>,
 }
 
 impl Default for BufferSweep {
@@ -1131,7 +1131,8 @@ fn heap_buffer_pass(heap: &crate::descriptor::Heap, host: &crate::descriptor::ho
         std::env::var("VICTORY_UNWATCHED_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(1)
     });
     let mut found = Vec::with_capacity(spans.len());
-    let mut next_unwatched = std::collections::HashMap::new();
+    let mut next_unwatched: std::collections::HashMap<u64, (u64, u64, u64), std::hash::BuildHasherDefault<crate::host::AddressHash>> =
+        std::collections::HashMap::default();
     for (shadow, from, to) in spans.values() {
         if every > 1 && shadow.unwatched() {
             let id = shadow.id();
